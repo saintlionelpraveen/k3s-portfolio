@@ -8,9 +8,52 @@ pipeline {
 
     environment {
         DOCKER_IMAGE = "messitebi/php-app"
+        LOCAL_DEPLOY_DIR = 'C:\\Users\\Admin\\Documents\\Portfolio\\ci-cd'
     }
 
     stages {
+        stage('Checkout') {
+            steps {
+                echo '📥 Pulling latest code...'
+                checkout scm
+            }
+        }
+
+        stage('Update Local Directory') {
+            steps {
+                echo '📂 Copying code to local ci-cd directory...'
+                bat '''
+                    @echo off
+                    echo ============================================
+                    echo   Updating local directory...
+                    echo ============================================
+
+                    REM Create the target directory if it doesn't exist
+                    if not exist "%LOCAL_DEPLOY_DIR%" (
+                        mkdir "%LOCAL_DEPLOY_DIR%"
+                    )
+
+                    REM Copy all files from workspace to local directory (excluding .git via a temporary exclude list)
+                    echo .git> "%WORKSPACE%\\exclude.txt"
+                    xcopy /E /Y /I "%WORKSPACE%\\*" "%LOCAL_DEPLOY_DIR%\\" /EXCLUDE:%WORKSPACE%\\exclude.txt
+                    set XCOPY_STATUS=%ERRORLEVEL%
+                    del "%WORKSPACE%\\exclude.txt"
+
+                    if %XCOPY_STATUS% neq 0 (
+                        echo ============================================
+                        echo   ❌ Failed to copy files to local directory!
+                        echo ============================================
+                        exit /b %XCOPY_STATUS%
+                    ) else (
+                        echo ============================================
+                        echo   ✅ Local directory updated successfully!
+                        echo   Path: %LOCAL_DEPLOY_DIR%
+                        echo ============================================
+                    )
+                '''
+            }
+        }
+
         stage('Deploy to K8s') {
             steps {
                 script {
@@ -28,6 +71,26 @@ pipeline {
                     """
                 }
             }
+        }
+    }
+
+    post {
+        success {
+            echo '''
+            ============================================
+              ✅ CD Pipeline completed successfully!
+              - Local directory update: DONE
+              - Kubernetes deployment: DONE
+            ============================================
+            '''
+        }
+        failure {
+            echo '''
+            ============================================
+              ❌ CD Pipeline FAILED!
+              Check the logs above for errors.
+            ============================================
+            '''
         }
     }
 }
