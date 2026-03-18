@@ -33,6 +33,6 @@
     RewriteRule ^([^\.]+)$ $1.php [NC,L]
 
     # Force HTTPS (Optional but recommended)
-    RewriteCond %{HTTPS} off
-    RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+    # RewriteCond %{HTTPS} off
+    # RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 </IfModule>
