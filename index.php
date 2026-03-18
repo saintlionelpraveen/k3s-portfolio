@@ -179,8 +179,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['send_message'])) {
             
             <li><a href="#fellowship">Fellowship</a></li>
             <li><a href="#projects">Works</a></li>
-            <li><a href="#pipeline" style="color:red; font-weight:bold;">Pipeline Test</a></li>
-            <li><a href="#ngrok-test" style="color:green; font-weight:bold;">Ngrok Test</a></li>
+
             <li><a href="#contact" class="nav-btn">Contact <i class="fas fa-arrow-right"></i></a></li>
         </ul>
     </nav>
