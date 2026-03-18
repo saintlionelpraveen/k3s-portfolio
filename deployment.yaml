@@ -14,6 +14,6 @@ spec:
     spec:
       containers:
       - name: php-app
-        image: messitebi/php-app:latest
+        image: messitebi/k3s-ci-cd:latest
         ports:
         - containerPort: 80
