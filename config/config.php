@@ -25,19 +25,24 @@ if ($_SERVER['HTTP_HOST'] == 'localhost' || $_SERVER['HTTP_HOST'] == '127.0.0.1'
     ini_set('display_errors', 1);
 }
 
+// Prevent PHP 8.1+ default fatal exceptions for mysqli
+mysqli_report(MYSQLI_REPORT_OFF);
+
 // Create connection
-$conn = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
+$conn = @new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
 
 // Check connection
 if ($conn->connect_error) {
-    // Only show detailed error if local
-    if ($_SERVER['HTTP_HOST'] == 'localhost') {
-        die("Connection failed: " . $conn->connect_error);
-    } else {
-        die("Connection failed. Please check configuration.");
-    }
+    // Create a dummy connection object to prevent fatal errors in index.php
+    $conn = new class {
+        public $connect_error = true;
+        public function query() { return false; }
+        public function prepare() { return false; }
+        public function real_escape_string($s) { return htmlspecialchars($s); }
+        public function set_charset() {}
+    };
+} else {
+    // Set charset to utf8mb4
+    $conn->set_charset("utf8mb4");
 }
-
-// Set charset to utf8mb4
-$conn->set_charset("utf8mb4");
 ?>
