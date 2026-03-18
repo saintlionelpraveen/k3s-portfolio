@@ -1,0 +1,58 @@
+name: K8s CI/CD Pipeline
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+jobs:
+  build-and-push:
+    if: github.event.pull_request.merged == true
+    runs-on: self-hosted
+    outputs:
+      image_tag: ${{ steps.prep.outputs.tag }}
+      namespace: ${{ steps.prep.outputs.namespace }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Get Tag and Namespace
+        id: prep
+        shell: bash
+        run: |
+          echo "tag=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+          
+          NS="default"
+          LABELS=$(cat << 'EOF'
+          ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          EOF
+          )
+          
+          # Simple search using grep to extract ns: label
+          for label in $(echo "$LABELS" | grep -o '"ns:[^"]*"' | tr -d '"'); do
+            NS="${label#ns:}"
+            break
+          done
+          
+          echo "namespace=$NS" >> $GITHUB_OUTPUT
+
+      - name: Build and Push Docker image
+        shell: bash
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/php-app:${{ steps.prep.outputs.tag }} -t ${{ secrets.DOCKERHUB_USERNAME }}/php-app:latest .
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/php-app:${{ steps.prep.outputs.tag }}
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/php-app:latest
+
+  deploy:
+    needs: build-and-push
+    runs-on: self-hosted
+    environment: k8s-production
+    steps:
+      - name: Trigger Jenkins
+        shell: bash
+        run: |
+          curl -v -X POST \
+            -u "${{ secrets.JENKINS_USER }}:${{ secrets.JENKINS_TOKEN }}" \
+            "${{ secrets.JENKINS_URL }}/job/K8s-Deployment/buildWithParameters?token=GITHUB_TOKEN&IMAGE_TAG=${{ needs.build-and-push.outputs.image_tag }}&TARGET_NAMESPACE=${{ needs.build-and-push.outputs.namespace }}"

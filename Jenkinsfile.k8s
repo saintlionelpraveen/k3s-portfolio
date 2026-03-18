@@ -1,0 +1,33 @@
+pipeline {
+    agent any
+
+    parameters {
+        string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'Docker Image Tag')
+        string(name: 'TARGET_NAMESPACE', defaultValue: 'default', description: 'Target Kubernetes Namespace')
+    }
+
+    environment {
+        DOCKER_IMAGE = "messitebi/php-app"
+    }
+
+    stages {
+        stage('Deploy to K8s') {
+            steps {
+                script {
+                    echo "Deploying to namespace: ${params.TARGET_NAMESPACE}"
+                    
+                    bat '''
+                        kubectl get namespace %TARGET_NAMESPACE% >nul 2>&1 || kubectl create namespace %TARGET_NAMESPACE%
+                    '''
+                    
+                    bat """
+                        kubectl apply -f deployment.yaml -n ${params.TARGET_NAMESPACE}
+                        kubectl apply -f service.yaml -n ${params.TARGET_NAMESPACE}
+                        kubectl set image deployment/php-app php-app=${DOCKER_IMAGE}:${params.IMAGE_TAG} -n ${params.TARGET_NAMESPACE}
+                        kubectl rollout status deployment/php-app -n ${params.TARGET_NAMESPACE}
+                    """
+                }
+            }
+        }
+    }
+}
