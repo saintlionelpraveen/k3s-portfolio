@@ -8,23 +8,26 @@ pipeline {
 
     environment {
         DOCKER_IMAGE = "messitebi/php-app"
+        TARGET_NAMESPACE_ENV = "${params.TARGET_NAMESPACE}"
+        IMAGE_TAG_ENV = "${params.IMAGE_TAG}"
+        KUBECONFIG = "C:\\Users\\Admin\\.kube\\config"
     }
 
     stages {
         stage('Deploy to K8s') {
             steps {
                 script {
-                    echo "Deploying to namespace: ${params.TARGET_NAMESPACE}"
-                    
-                    bat '''
-                        kubectl get namespace %TARGET_NAMESPACE% >nul 2>&1 || kubectl create namespace %TARGET_NAMESPACE%
-                    '''
+                    echo "Deploying to namespace: ${env.TARGET_NAMESPACE_ENV}"
                     
                     bat """
-                        kubectl apply -f deployment.yaml -n ${params.TARGET_NAMESPACE}
-                        kubectl apply -f service.yaml -n ${params.TARGET_NAMESPACE}
-                        kubectl set image deployment/php-app php-app=${DOCKER_IMAGE}:${params.IMAGE_TAG} -n ${params.TARGET_NAMESPACE}
-                        kubectl rollout status deployment/php-app -n ${params.TARGET_NAMESPACE}
+                        kubectl --kubeconfig=${env.KUBECONFIG} get namespace ${env.TARGET_NAMESPACE_ENV} >nul 2>&1 || kubectl --kubeconfig=${env.KUBECONFIG} create namespace ${env.TARGET_NAMESPACE_ENV}
+                    """
+                    
+                    bat """
+                        kubectl --kubeconfig=${env.KUBECONFIG} apply -f deployment.yaml -n ${env.TARGET_NAMESPACE_ENV}
+                        kubectl --kubeconfig=${env.KUBECONFIG} apply -f service.yaml -n ${env.TARGET_NAMESPACE_ENV}
+                        kubectl --kubeconfig=${env.KUBECONFIG} set image deployment/php-app php-app=${env.DOCKER_IMAGE}:${env.IMAGE_TAG_ENV} -n ${env.TARGET_NAMESPACE_ENV}
+                        kubectl --kubeconfig=${env.KUBECONFIG} rollout status deployment/php-app -n ${env.TARGET_NAMESPACE_ENV}
                     """
                 }
             }
