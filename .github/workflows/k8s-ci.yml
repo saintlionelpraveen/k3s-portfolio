@@ -1,58 +1,225 @@
-name: K8s CI/CD Pipeline
+name: CI/CD — Build, Approve and Deploy (K8s)
 
 on:
   pull_request:
     types: [closed]
-    branches:
-      - main
+
+# ──────────────────────────────────────────────────────────
+# Prevent multiple simultaneous deploys to the same namespace
+# ──────────────────────────────────────────────────────────
+concurrency:
+  group: deploy-${{ github.event.pull_request.labels.*.name }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/k3s-ci-cd
 
 jobs:
-  build-and-push:
+
+  # ──────────────────────────────────────────────────────────
+  # JOB 1 — Validate PR labels before doing any work
+  # ──────────────────────────────────────────────────────────
+  validate-labels:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     outputs:
-      image_tag: ${{ steps.prep.outputs.tag }}
-      namespace: ${{ steps.prep.outputs.namespace }}
+      namespace: ${{ steps.resolve.outputs.namespace }}
+      should_deploy: ${{ steps.resolve.outputs.should_deploy }}
+
+    steps:
+      - name: Resolve namespace from PR labels
+        id: resolve
+        run: |
+          LABELS="${{ join(github.event.pull_request.labels.*.name, ' ') }}"
+          echo "PR labels: $LABELS"
+
+          # No deploy-to-k8s label → skip entire pipeline
+          if ! echo "$LABELS" | grep -q "deploy-to-k8s"; then
+            echo "No deploy-to-k8s label found. Skipping deployment."
+            echo "should_deploy=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Check for namespace labels
+          HAS_APP1=$(echo "$LABELS" | grep -c "ns:app1" || true)
+          HAS_APP2=$(echo "$LABELS" | grep -c "ns:app2" || true)
+
+          # Both namespace labels on same PR → reject
+          if [ "$HAS_APP1" -eq 1 ] && [ "$HAS_APP2" -eq 1 ]; then
+            echo "::error::Both ns:app1 and ns:app2 labels found on the same PR."
+            echo "::error::Remove one namespace label and re-run."
+            exit 1
+          fi
+
+          # deploy-to-k8s present but no ns: label → reject
+          if [ "$HAS_APP1" -eq 0 ] && [ "$HAS_APP2" -eq 0 ]; then
+            echo "::error::deploy-to-k8s label is set but no namespace label (ns:app1 or ns:app2) found."
+            echo "::error::Add one namespace label to the PR."
+            exit 1
+          fi
+
+          if [ "$HAS_APP2" -eq 1 ]; then
+            echo "namespace=app2" >> $GITHUB_OUTPUT
+          else
+            echo "namespace=app1" >> $GITHUB_OUTPUT
+          fi
+          echo "should_deploy=true" >> $GITHUB_OUTPUT
+
+  # ──────────────────────────────────────────────────────────
+  # JOB 2 — Build and push Docker image
+  # ──────────────────────────────────────────────────────────
+  build-and-push:
+    needs: validate-labels
+    if: needs.validate-labels.outputs.should_deploy == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Get Tag and Namespace
-        id: prep
-        shell: bash
+      # Verify Dockerfile exists before building
+      - name: Check Dockerfile exists
         run: |
-          echo "tag=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
-          
-          NS="default"
-          LABELS=$(cat << 'EOF'
-          ${{ toJSON(github.event.pull_request.labels.*.name) }}
-          EOF
-          )
-          
-          # Simple search using grep to extract ns: label
-          for label in $(echo "$LABELS" | grep -o '"ns:[^"]*"' | tr -d '"'); do
-            NS="${label#ns:}"
-            break
-          done
-          
-          echo "namespace=$NS" >> $GITHUB_OUTPUT
+          if [ ! -f Dockerfile ]; then
+            echo "::error::Dockerfile not found in repo root."
+            exit 1
+          fi
 
-      - name: Build and Push Docker image
-        shell: bash
+      - name: Set image tag (commit SHA)
+        id: meta
+        run: echo "image_tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Retry on transient Docker Hub push failures
+      - name: Build and push image (with retry)
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          retry_wait_seconds: 15
+          command: |
+            docker buildx build \
+              --push \
+              --tag ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.image_tag }} \
+              --tag ${{ env.IMAGE_NAME }}:latest \
+              --cache-from type=registry,ref=${{ env.IMAGE_NAME }}:latest \
+              --cache-to   type=inline \
+              .
+
+      # Verify the image actually landed on Docker Hub
+      - name: Verify image exists on Docker Hub
         run: |
-          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
-          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/php-app:${{ steps.prep.outputs.tag }} -t ${{ secrets.DOCKERHUB_USERNAME }}/php-app:latest .
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/php-app:${{ steps.prep.outputs.tag }}
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/php-app:latest
+          docker pull ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.image_tag }}
+          echo "Image verified on Docker Hub."
 
-  deploy:
-    needs: build-and-push
+  # ──────────────────────────────────────────────────────────
+  # JOB 3 — Human approval gate
+  # ──────────────────────────────────────────────────────────
+  await-approval:
+    needs: [validate-labels, build-and-push]
+    if: needs.validate-labels.outputs.should_deploy == 'true'
     runs-on: ubuntu-latest
     environment: k8s-production
+
     steps:
-      - name: Trigger Jenkins
-        shell: bash
+      - name: Approved — proceeding to Jenkins
         run: |
-          curl -v -X POST \
-            -u "${{ secrets.JENKINS_USER }}:${{ secrets.JENKINS_TOKEN }}" \
-            "${{ secrets.JENKINS_URL }}/job/K8s-Deployment/buildWithParameters?token=GITHUB_TOKEN&IMAGE_TAG=${{ needs.build-and-push.outputs.image_tag }}&TARGET_NAMESPACE=${{ needs.build-and-push.outputs.namespace }}"
+          echo "Namespace : ${{ needs.validate-labels.outputs.namespace }}"
+          echo "Image tag : ${{ needs.build-and-push.outputs.image_tag }}"
+
+  # ──────────────────────────────────────────────────────────
+  # JOB 4 — Trigger Jenkins with verified params
+  # ──────────────────────────────────────────────────────────
+  trigger-jenkins:
+    needs: [validate-labels, build-and-push, await-approval]
+    if: needs.validate-labels.outputs.should_deploy == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      # Check Jenkins is reachable before triggering
+      - name: Check Jenkins is reachable
+        run: |
+          echo "Checking Jenkins at: ${{ secrets.JENKINS_URL }}"
+
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 15 \
+            --retry 2 \
+            --retry-delay 5 \
+            "${{ secrets.JENKINS_URL }}/login" 2>/dev/null || echo "000")
+
+          echo "Jenkins responded with HTTP $HTTP_CODE"
+
+          if [ "$HTTP_CODE" = "000" ]; then
+            echo "::error::Jenkins is not reachable at all. Connection timed out or refused."
+            echo "::error::Is ngrok running? Run: ngrok http 9000"
+            echo "::error::Then update JENKINS_URL secret in GitHub with the new ngrok URL."
+            exit 1
+          fi
+
+          if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "403" ]; then
+            echo "::error::Jenkins returned unexpected HTTP $HTTP_CODE."
+            echo "::error::Expected 200 or 403. Check if Jenkins is running properly."
+            exit 1
+          fi
+
+          echo "Jenkins is reachable (HTTP $HTTP_CODE)."
+
+      # Trigger Jenkins and capture response with proper error handling
+      - name: Trigger Jenkins deployment
+        run: |
+          echo "Triggering Jenkins job: php-k8s-deploy"
+          echo "  Namespace: ${{ needs.validate-labels.outputs.namespace }}"
+          echo "  Image tag: ${{ needs.build-and-push.outputs.image_tag }}"
+
+          # Write response to a temp file to handle multi-line responses
+          HTTP_CODE=$(curl -s -o /tmp/jenkins_response.txt -w "%{http_code}" \
+            --max-time 30 \
+            --retry 2 \
+            --retry-delay 5 \
+            -X POST \
+            "${{ secrets.JENKINS_URL }}/job/php-k8s-deploy/buildWithParameters" \
+            --user "${{ secrets.JENKINS_USER }}:${{ secrets.JENKINS_TOKEN }}" \
+            --data-urlencode "TARGET_NAMESPACE=${{ needs.validate-labels.outputs.namespace }}" \
+            --data-urlencode "IMAGE_TAG=${{ needs.build-and-push.outputs.image_tag }}" \
+            --data-urlencode "DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}" \
+            --data-urlencode "token=k8s-deploy-token" \
+            2>/dev/null || echo "000")
+
+          BODY=$(cat /tmp/jenkins_response.txt 2>/dev/null || echo "No response body")
+          echo "Jenkins response code: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" = "000" ]; then
+            echo "::error::Jenkins connection failed during trigger. Network error."
+            exit 1
+          fi
+
+          if [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
+            echo "::error::Jenkins authentication failed (HTTP $HTTP_CODE)."
+            echo "::error::Check JENKINS_USER and JENKINS_TOKEN secrets."
+            echo "::error::Response: $BODY"
+            exit 1
+          fi
+
+          if [ "$HTTP_CODE" = "404" ]; then
+            echo "::error::Jenkins job 'php-k8s-deploy' not found (HTTP 404)."
+            echo "::error::Create the job in Jenkins or check the job name."
+            echo "::error::Response: $BODY"
+            exit 1
+          fi
+
+          if [ "$HTTP_CODE" != "201" ] && [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Jenkins trigger failed with HTTP $HTTP_CODE."
+            echo "::error::Response: $BODY"
+            exit 1
+          fi
+
+          echo "Jenkins job triggered successfully."
+          echo "Monitor at: ${{ secrets.JENKINS_URL }}/job/php-k8s-deploy/"

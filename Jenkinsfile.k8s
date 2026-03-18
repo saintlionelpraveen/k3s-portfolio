@@ -1,36 +1,258 @@
 pipeline {
     agent any
 
+    // ── Global options ─────────────────────────────────────
+    options {
+        timeout(time: 15, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timestamps()
+    }
+
     parameters {
-        string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'Docker Image Tag')
-        string(name: 'TARGET_NAMESPACE', defaultValue: 'default', description: 'Target Kubernetes Namespace')
+        choice(
+            name: 'TARGET_NAMESPACE',
+            choices: ['app1', 'app2'],
+            description: 'Which K8s namespace to deploy to?'
+        )
+        string(
+            name: 'IMAGE_TAG',
+            defaultValue: '',
+            description: 'Docker image tag (git commit SHA from CI)'
+        )
+        string(
+            name: 'DOCKERHUB_USERNAME',
+            defaultValue: '',
+            description: 'Docker Hub username'
+        )
     }
 
     environment {
-        DOCKER_IMAGE = "messitebi/php-app"
-        TARGET_NAMESPACE_ENV = "${params.TARGET_NAMESPACE}"
-        IMAGE_TAG_ENV = "${params.IMAGE_TAG}"
-        KUBECONFIG = "C:\\Users\\Admin\\.kube\\config"
+        KUBECONFIG  = "C:\\Users\\Admin\\.kube\\config"
+        IMAGE_FULL  = "${params.DOCKERHUB_USERNAME}/k3s-ci-cd:${params.IMAGE_TAG}"
     }
 
     stages {
-        stage('Deploy to K8s') {
+
+        // ── Stage 1: Validate all inputs ─────────────────────
+        stage('Validate inputs') {
             steps {
                 script {
-                    echo "Deploying to namespace: ${env.TARGET_NAMESPACE_ENV}"
-                    
+                    def errors = []
+
+                    if (!params.IMAGE_TAG?.trim()) {
+                        errors << "IMAGE_TAG is empty. Was the CI build step skipped?"
+                    }
+                    if (!params.DOCKERHUB_USERNAME?.trim()) {
+                        errors << "DOCKERHUB_USERNAME is empty."
+                    }
+                    def allowed = ['app1', 'app2']
+                    if (!allowed.contains(params.TARGET_NAMESPACE)) {
+                        errors << "TARGET_NAMESPACE '${params.TARGET_NAMESPACE}' is not in allowed list: ${allowed}"
+                    }
+                    // Catch git SHA that looks truncated (< 7 chars)
+                    if (params.IMAGE_TAG?.trim() && params.IMAGE_TAG.trim().length() < 7) {
+                        errors << "IMAGE_TAG '${params.IMAGE_TAG}' looks truncated. Expected full or short git SHA."
+                    }
+
+                    if (errors) {
+                        error("Validation failed:\n" + errors.join("\n"))
+                    }
+
+                    echo "Namespace  : ${params.TARGET_NAMESPACE}"
+                    echo "Image      : ${env.IMAGE_FULL}"
+                }
+            }
+        }
+
+        // ── Stage 2: Check Minikube cluster is reachable ─────
+        stage('Check Minikube cluster') {
+            steps {
+                script {
+                    // Verify kubeconfig exists
+                    if (!fileExists(env.KUBECONFIG)) {
+                        error("""
+Kubeconfig not found at ${env.KUBECONFIG}.
+Fix options:
+  1. Run: minikube start
+  2. Check file exists: ${env.KUBECONFIG}
+  3. Run: minikube status
+                        """.stripIndent())
+                    }
+
+                    // Verify cluster is reachable
+                    def clusterInfo = bat(
+                        script: "@kubectl --kubeconfig=${env.KUBECONFIG} cluster-info --request-timeout=10s 2>&1 || exit 0",
+                        returnStdout: true
+                    ).trim()
+
+                    if (!clusterInfo.toLowerCase().contains('running')) {
+                        error("""
+Minikube cluster is not reachable.
+Output: ${clusterInfo}
+Fix: minikube start
+                        """.stripIndent())
+                    }
+                    echo "Minikube cluster is reachable."
+                }
+            }
+        }
+
+        // ── Stage 3: Check namespace exists ──────────────────
+        stage('Check namespace') {
+            steps {
+                script {
+                    def nsCheck = bat(
+                        script: "@kubectl --kubeconfig=${env.KUBECONFIG} get namespace ${params.TARGET_NAMESPACE} --no-headers 2>&1 || exit 0",
+                        returnStdout: true
+                    ).trim()
+
+                    if (!nsCheck.contains('Active')) {
+                        echo "Namespace '${params.TARGET_NAMESPACE}' not found. Creating it..."
+                        bat "@kubectl --kubeconfig=${env.KUBECONFIG} create namespace ${params.TARGET_NAMESPACE}"
+                        echo "Namespace created."
+                    } else {
+                        echo "Namespace '${params.TARGET_NAMESPACE}' exists."
+                    }
+                }
+            }
+        }
+
+        // ── Stage 4: Verify image exists on Docker Hub ───────
+        stage('Verify image on registry') {
+            steps {
+                script {
+                    def pullResult = bat(
+                        script: "@docker pull ${env.IMAGE_FULL} 2>&1 || exit 0",
+                        returnStdout: true
+                    ).trim()
+
+                    if (pullResult.contains('not found') || pullResult.contains('Error')) {
+                        error("""
+Image not found on Docker Hub: ${env.IMAGE_FULL}
+This usually means:
+  - The CI build-and-push job failed silently
+  - The IMAGE_TAG is wrong
+  - Docker Hub credentials expired
+Output: ${pullResult}
+                        """.stripIndent())
+                    }
+                    echo "Image verified: ${env.IMAGE_FULL}"
+                }
+            }
+        }
+
+        // ── Stage 5: Check deployment exists ─────────────────
+        stage('Check deployment exists') {
+            steps {
+                script {
+                    def depCheck = bat(
+                        script: "@kubectl --kubeconfig=${env.KUBECONFIG} get deployment php-app -n ${params.TARGET_NAMESPACE} --no-headers 2>&1 || exit 0",
+                        returnStdout: true
+                    ).trim()
+
+                    if (depCheck.contains('NotFound') || depCheck.contains('not found') || depCheck.trim().isEmpty()) {
+                        echo "No existing deployment found in '${params.TARGET_NAMESPACE}'."
+                        echo "Applying manifests..."
+                        bat """
+                            @kubectl --kubeconfig=${env.KUBECONFIG} apply -f deployment.yaml -n ${params.TARGET_NAMESPACE}
+                            @kubectl --kubeconfig=${env.KUBECONFIG} apply -f service.yaml    -n ${params.TARGET_NAMESPACE}
+                        """
+                        // Wait for initial rollout
+                        bat "@kubectl --kubeconfig=${env.KUBECONFIG} rollout status deployment/php-app -n ${params.TARGET_NAMESPACE} --timeout=120s"
+                        echo "Initial deployment done."
+                    } else {
+                        echo "Existing deployment found — will do rolling update."
+                    }
+                }
+            }
+        }
+
+        // ── Stage 6: Rolling update ──────────────────────────
+        stage('Deploy rolling update') {
+            steps {
+                script {
+                    echo "Updating image to: ${env.IMAGE_FULL}"
                     bat """
-                        kubectl --kubeconfig=${env.KUBECONFIG} get namespace ${env.TARGET_NAMESPACE_ENV} >nul 2>&1 || kubectl --kubeconfig=${env.KUBECONFIG} create namespace ${env.TARGET_NAMESPACE_ENV}
+                        @kubectl --kubeconfig=${env.KUBECONFIG} set image deployment/php-app php-app=${env.IMAGE_FULL} -n ${params.TARGET_NAMESPACE}
                     """
-                    
+                    // Annotate the deployment for audit trail
                     bat """
-                        kubectl --kubeconfig=${env.KUBECONFIG} apply -f deployment.yaml -n ${env.TARGET_NAMESPACE_ENV}
-                        kubectl --kubeconfig=${env.KUBECONFIG} apply -f service.yaml -n ${env.TARGET_NAMESPACE_ENV}
-                        kubectl --kubeconfig=${env.KUBECONFIG} set image deployment/php-app php-app=${env.DOCKER_IMAGE}:${env.IMAGE_TAG_ENV} -n ${env.TARGET_NAMESPACE_ENV}
-                        kubectl --kubeconfig=${env.KUBECONFIG} rollout status deployment/php-app -n ${env.TARGET_NAMESPACE_ENV}
+                        @kubectl --kubeconfig=${env.KUBECONFIG} annotate deployment/php-app -n ${params.TARGET_NAMESPACE} deployment.kubernetes.io/deployed-by="jenkins-build-${BUILD_NUMBER}" deployment.kubernetes.io/image-tag="${params.IMAGE_TAG}" --overwrite
                     """
                 }
             }
+        }
+
+        // ── Stage 7: Verify rollout health ───────────────────
+        stage('Verify rollout') {
+            steps {
+                script {
+                    bat "@kubectl --kubeconfig=${env.KUBECONFIG} rollout status deployment/php-app -n ${params.TARGET_NAMESPACE} --timeout=120s"
+
+                    // Check for unhealthy pods
+                    def podStatus = bat(
+                        script: "@kubectl --kubeconfig=${env.KUBECONFIG} get pods -n ${params.TARGET_NAMESPACE} --no-headers 2>&1",
+                        returnStdout: true
+                    ).trim()
+
+                    if (podStatus.contains('CrashLoopBackOff') || podStatus.contains('Error') || podStatus.contains('ImagePullBackOff')) {
+                        echo "Unhealthy pods detected:\n${podStatus}"
+                        error("Pods are not healthy after rollout. Triggering rollback.")
+                    }
+
+                    echo "Rollout healthy:\n${podStatus}"
+                }
+            }
+        }
+
+        // ── Stage 8: Show final state ────────────────────────
+        stage('Show final pod state') {
+            steps {
+                bat "@kubectl --kubeconfig=${env.KUBECONFIG} get pods -n ${params.TARGET_NAMESPACE} -o wide"
+                bat "@kubectl --kubeconfig=${env.KUBECONFIG} get deployment php-app -n ${params.TARGET_NAMESPACE} -o=jsonpath=\"Current image: {.spec.template.spec.containers[0].image}\""
+            }
+        }
+    }
+
+    // ── Post block ───────────────────────────────────────────
+    post {
+
+        success {
+            echo """
+===========================================
+Deployed successfully
+Namespace : ${params.TARGET_NAMESPACE}
+Image     : ${env.IMAGE_FULL}
+Build     : #${BUILD_NUMBER}
+===========================================
+            """.stripIndent()
+        }
+
+        // Any failure → auto rollback
+        failure {
+            echo "Deployment failed — initiating rollback for '${params.TARGET_NAMESPACE}'..."
+            script {
+                def rollbackResult = bat(
+                    script: "@kubectl --kubeconfig=${env.KUBECONFIG} rollout undo deployment/php-app -n ${params.TARGET_NAMESPACE} 2>&1 || exit 0",
+                    returnStdout: true
+                ).trim()
+                echo "Rollback result: ${rollbackResult}"
+
+                // Verify rollback pod health
+                bat "@kubectl --kubeconfig=${env.KUBECONFIG} rollout status deployment/php-app -n ${params.TARGET_NAMESPACE} --timeout=60s || exit 0"
+                bat "@kubectl --kubeconfig=${env.KUBECONFIG} get pods -n ${params.TARGET_NAMESPACE} --no-headers || exit 0"
+            }
+        }
+
+        // Pipeline aborted — do NOT rollback, just log
+        aborted {
+            echo "Pipeline was aborted for '${params.TARGET_NAMESPACE}'. No rollback performed."
+            echo "The previously running version remains active."
+        }
+
+        // Always clean up local pulled image to save disk
+        always {
+            bat "@docker rmi ${env.IMAGE_FULL} 2>nul || exit 0"
         }
     }
 }
