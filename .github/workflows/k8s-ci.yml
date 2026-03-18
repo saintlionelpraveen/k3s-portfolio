@@ -9,7 +9,7 @@ on:
 jobs:
   build-and-push:
     if: github.event.pull_request.merged == true
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     outputs:
       image_tag: ${{ steps.prep.outputs.tag }}
       namespace: ${{ steps.prep.outputs.namespace }}
@@ -47,7 +47,7 @@ jobs:
 
   deploy:
     needs: build-and-push
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     environment: k8s-production
     steps:
       - name: Trigger Jenkins
