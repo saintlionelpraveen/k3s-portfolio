@@ -27,8 +27,7 @@ pipeline {
 
     environment {
         KUBECONFIG  = "C:\\Users\\Admin\\.kube\\config"
-        // Smarter image string construction: use '@' for digests, ':' for tags
-        IMAGE_FULL = "${params.DOCKERHUB_USERNAME}/k3s-ci-cd" + (params.IMAGE_TAG.startsWith('sha256:') ? "@${params.IMAGE_TAG}" : ":${params.IMAGE_TAG}")
+        IMAGE_FULL  = "${params.DOCKERHUB_USERNAME}/k3s-ci-cd:${params.IMAGE_TAG}"
     }
 
     stages {
@@ -157,17 +156,11 @@ Output: ${pullResult}
                             @kubectl --kubeconfig=${env.KUBECONFIG} apply -f deployment.yaml -n ${params.TARGET_NAMESPACE}
                             @kubectl --kubeconfig=${env.KUBECONFIG} apply -f service.yaml    -n ${params.TARGET_NAMESPACE}
                         """
-                        // Ensure the live replica count matches the file (optional, but good for consistency)
-                        bat "@kubectl --kubeconfig=${env.KUBECONFIG} scale deployment/php-app --replicas=1 -n ${params.TARGET_NAMESPACE}"
-                        
                         // Wait for initial rollout
                         bat "@kubectl --kubeconfig=${env.KUBECONFIG} rollout status deployment/php-app -n ${params.TARGET_NAMESPACE} --timeout=120s"
                         echo "Initial deployment done."
                     } else {
-                        echo "Existing deployment found — ensuring file-based config is applied first."
-                        // Apply the yaml first to ensure things like replica count are synced
-                        bat "@kubectl --kubeconfig=${env.KUBECONFIG} apply -f deployment.yaml -n ${params.TARGET_NAMESPACE}"
-                        echo "Sync complete — proceeding to rolling image update."
+                        echo "Existing deployment found — will do rolling update."
                     }
                 }
             }
