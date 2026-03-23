@@ -385,8 +385,9 @@ if (isset($_SESSION['admin_id'])) {
                 <label for="password">Password</label>
                 <div class="login-input-wrap">
                     <input type="password" id="password" name="password" placeholder="••••••••" required
-                        autocomplete="current-password">
+                        autocomplete="current-password" style="padding-right: 2.5rem;">
                     <i class="fas fa-lock"></i>
+                    <i class="fas fa-eye toggle-password" style="position: absolute; right: 1rem; left: auto; cursor: pointer; z-index: 10; pointer-events: auto;"></i>
                 </div>
             </div>
             <button type="submit" class="login-btn" id="loginBtn">
@@ -487,6 +488,18 @@ if (isset($_SESSION['admin_id'])) {
             btn.style.pointerEvents = 'none';
             btn.style.opacity = '0.75';
         });
+
+        // Password toggle
+        const togglePassword = document.querySelector('.toggle-password');
+        const passwordInput = document.getElementById('password');
+        if (togglePassword && passwordInput) {
+            togglePassword.addEventListener('click', function (e) {
+                const type = passwordInput.getAttribute('type') === 'password' ? 'text' : 'password';
+                passwordInput.setAttribute('type', type);
+                this.classList.toggle('fa-eye');
+                this.classList.toggle('fa-eye-slash');
+            });
+        }
 
         // Auto-focus
         setTimeout(() => document.getElementById('username').focus(), 600);
