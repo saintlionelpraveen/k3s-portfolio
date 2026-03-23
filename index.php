@@ -155,10 +155,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['send_message'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?php echo $hero['title']; ?> - Portfolios</title>
-    <!-- OAT CSS Framework -->
-    <link rel="stylesheet" href="https://unpkg.com/@knadh/oat/oat.min.css">
-    <!-- Neo-Brutalist Styles Overrides -->
+    <meta name="theme-color" content="#0a0a1a">
+    <title><?php echo $hero['title']; ?> - Portfolio</title>
+    <meta name="description" content="Professional portfolio showcasing skills, projects, and experience.">
+    <!-- Styles -->
     <link rel="stylesheet" href="assets/css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
@@ -170,28 +170,29 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['send_message'])) {
         <a href="#home" class="logo"><?php
         $navbar_logo_img = get_site_content('navbar_logo_img');
         if ($navbar_logo_img && $navbar_logo_img !== 'navbar_logo_img') {
-            echo '<img src="uploads/' . htmlspecialchars($navbar_logo_img) . '" alt="Logo" style="height:40px;object-fit:contain;">';
+            echo '<img src="uploads/' . htmlspecialchars($navbar_logo_img) . '" alt="Logo" style="height:38px;object-fit:contain;">';
         } else {
             echo htmlspecialchars(get_site_content('navbar_logo'));
         }
         ?></a>
-        <ul class="nav-links">
-
+        <ul class="nav-links" id="nav-links">
             <li><a href="#home">Home</a></li>
             <li><a href="#about">About</a></li>
-            
             <li><a href="#fellowship">Fellowship</a></li>
             <li><a href="#projects">Works</a></li>
-
             <li><a href="#contact" class="nav-btn">Contact <i class="fas fa-arrow-right"></i></a></li>
         </ul>
+        <div class="hamburger" id="hamburger" aria-label="Toggle navigation">
+            <span></span><span></span><span></span>
+        </div>
     </nav>
 
     <!-- Hero Section -->
     <section id="home" class="hero">
+        <canvas id="hero-particles"></canvas>
         <div class="hero-text fade-in">
             <h1><?php echo htmlspecialchars($hero['title']); ?></h1>
-            <p><?php echo htmlspecialchars($hero['subtitle']); ?></p>
+            <p><span id="typing-text"><?php echo htmlspecialchars($hero['subtitle']); ?></span><span class="typing-cursor"></span></p>
 
             <div class="cta-group">
                 <a href="#contact" class="btn-primary"><?php echo get_site_content('Contact Me'); ?> <i
