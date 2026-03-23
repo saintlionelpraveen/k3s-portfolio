@@ -15,5 +15,6 @@ spec:
       containers:
       - name: php-app
         image: messitebi/k3s-ci-cd:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 80
