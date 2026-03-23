@@ -128,21 +128,21 @@ nav.scrolled {
 
 .btn-primary {
     padding: 1rem 2.8rem;
-    background: var(--accent-color);
-    color: var(--text-color);
+    background: linear-gradient(135deg, var(--accent-color), var(--accent-dark));
+    color: #fff;
     font-weight: 600;
     text-decoration: none;
     border-radius: 50px;
-    transition: 0.3s;
-    box-shadow: 0 10px 20px rgba(125, 211, 252, 0.4);
+    transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    box-shadow: 0 10px 20px rgba(14, 165, 233, 0.3);
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
 }
 
 .btn-primary:hover {
-    transform: translateY(-5px);
-    box-shadow: 0 15px 25px rgba(125, 211, 252, 0.6);
+    transform: translateY(-5px) scale(1.05);
+    box-shadow: 0 15px 30px rgba(14, 165, 233, 0.5);
 }
 
 .client-stats {
@@ -193,12 +193,14 @@ nav.scrolled {
 
 .hero-bg-blob {
     position: absolute;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(135deg, #e0f2fe 0%, #f0f9ff 100%);
+    width: 120%;
+    height: 120%;
+    background: linear-gradient(135deg, #7dd3fc 0%, #c084fc 50%, #f472b6 100%);
+    opacity: 0.15;
+    filter: blur(45px);
     border-radius: 40% 60% 70% 30% / 40% 50% 60% 50%;
     z-index: -1;
-    animation: blob-bounce 10s infinite ease-in-out;
+    animation: blob-bounce 15s infinite ease-in-out alternate;
 }
 
 @keyframes blob-bounce {
