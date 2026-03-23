@@ -711,6 +711,29 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['send_message'])) {
         </center>
     </footer>
 
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            const observer = new IntersectionObserver((entries, obs) => {
+                entries.forEach((entry) => {
+                    if (entry.isIntersecting) {
+                        entry.target.classList.add('visible');
+                        entry.target.style.opacity = 1;
+                        entry.target.style.transform = 'translateY(0)';
+                        obs.unobserve(entry.target);
+                    }
+                });
+            }, { threshold: 0.1, rootMargin: "0px 0px -50px 0px" });
+
+            document.querySelectorAll('.fade-in, .skill-card, .project-card, .experience-card, .fellowship-hero-row').forEach((el, index) => {
+                if (!el.classList.contains('visible')) {
+                    el.style.opacity = 0;
+                    el.style.transform = el.classList.contains('fellowship-hero-row--reverse') ? 'translateX(40px)' : 'translateY(30px)';
+                    el.style.transition = `opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1) ${index % 5 * 0.1}s, transform 0.7s cubic-bezier(0.16, 1, 0.3, 1) ${index % 5 * 0.1}s`;
+                    observer.observe(el);
+                }
+            });
+        });
+    </script>
     <script src="assets/js/main.js"></script>
 </body>
 

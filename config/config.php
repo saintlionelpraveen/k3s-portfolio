@@ -2,34 +2,20 @@
 // config/config.php
 
 // Database credentials
-if ($_SERVER['HTTP_HOST'] == 'localhost' || $_SERVER['HTTP_HOST'] == '127.0.0.1') {
-    // Localhost (XAMPP)
-    define('DB_HOST', 'localhost');
-    define('DB_USER', 'root');
-    define('DB_PASS', '');
-    define('DB_NAME', 'praveen');
-    define('BASE_URL', 'http://localhost/Praveen-Portfolio/');
+$db_host = getenv('DB_HOST') ?: ($_SERVER['HTTP_HOST'] == 'localhost' || $_SERVER['HTTP_HOST'] == '127.0.0.1' ? 'localhost' : 'sql211.infinityfree.com');
+$db_user = getenv('DB_USER') ?: ($_SERVER['HTTP_HOST'] == 'localhost' || $_SERVER['HTTP_HOST'] == '127.0.0.1' ? 'root' : 'if0_41198642');
+$db_pass = getenv('DB_PASS') ?: ($_SERVER['HTTP_HOST'] == 'localhost' || $_SERVER['HTTP_HOST'] == '127.0.0.1' ? '' : 'praveen1328');
+$db_name = getenv('DB_NAME') ?: ($_SERVER['HTTP_HOST'] == 'localhost' || $_SERVER['HTTP_HOST'] == '127.0.0.1' ? 'praveen' : 'if0_41198642_praveen');
 
-    // Suggest error reporting for development
-    error_reporting(E_ALL);
-    ini_set('display_errors', 1);
-} else {
-    // InfinityFree (Production)
-    define('DB_HOST', 'sql211.infinityfree.com');
-    define('DB_USER', 'if0_41198642');
-    define('DB_PASS', 'praveen1328');
-    define('DB_NAME', 'if0_41198642_praveen');
-
-    // Temporarily show errors in production to debug the 500 error
-    error_reporting(E_ALL);
-    ini_set('display_errors', 1);
-}
+// Error reporting
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
 
 // Prevent PHP 8.1+ default fatal exceptions for mysqli
 mysqli_report(MYSQLI_REPORT_OFF);
 
 // Create connection
-$conn = @new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
+$conn = @new mysqli($db_host, $db_user, $db_pass, $db_name);
 
 // Check connection
 if ($conn->connect_error) {

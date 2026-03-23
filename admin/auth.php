@@ -14,6 +14,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // Query admin_users table
     $stmt = $conn->prepare("SELECT id, username, password FROM admin_users WHERE username = ? LIMIT 1");
+    if (!$stmt) {
+        header("Location: ../login.php?error=" . urlencode("Database Connection Error: Cannot verify credentials."));
+        exit();
+    }
     $stmt->bind_param("s", $username);
     $stmt->execute();
     $result = $stmt->get_result();
